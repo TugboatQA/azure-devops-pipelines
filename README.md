@@ -89,24 +89,13 @@ The pipelines name each preview they create `Azure PR #<id>: <title>` and find i
 3. Build a preview of `main` and set it as a base preview.
 4. Create a Tugboat access token for the pipelines.
 
-### 3. Pipeline variables
-
-1. Go to **Pipelines > Library** and create a variable group named `tugboat`.
-2. Add `TUGBOAT_REPO` with the Tugboat repository ID.
-3. Add `TUGBOAT_API_TOKEN` with the Tugboat access token. Select the lock icon to make it secret.
-
-For an on-premise Tugboat installation, also add:
-
-- `TUGBOAT_API`: `https://api.<your Tugboat domain>/v3`
-- `TUGBOAT_DASHBOARD`: `https://dashboard.<your Tugboat domain>`
-
-### 4. Permission to post status checks
+### 3. Permission to post status checks
 
 1. Go to **Project settings > Repositories**, select the repository, and open **Security**.
 2. Select **\<project name\> Build Service (\<organization name\>)**.
 3. Set **Contribute to pull requests** to **Allow**.
 
-### 5. Incoming webhooks
+### 4. Incoming webhooks
 
 Create two service connections, one named `tugboat-pull-request` and one named `tugboat-pr-comment`. For each:
 
@@ -114,17 +103,33 @@ Create two service connections, one named `tugboat-pull-request` and one named `
 2. Set both **WebHook Name** and **Service connection name** to the name.
 3. Select **Grant access permission to all pipelines** and save.
 
-### 6. Pipelines
+### 5. Pipelines
 
 For each of `tugboat-pr.yml`, `tugboat-recheck.yml`, `tugboat-cleanup.yml`, and `tugboat-refresh.yml`:
 
 1. Go to **Pipelines > New pipeline > Azure Repos Git**, select the repository, then **Existing Azure Pipelines YAML file**.
-2. Select the file, then select **Run**. Name the pipeline after the file.
-3. When prompted, allow the pipeline to use the `tugboat` variable group.
+2. Select the file, then open the **Run** menu and select **Save**.
+3. Azure names every new pipeline after the repository. Open the pipeline, select **⋮ > Rename/move**, and name it after the file, for example `tugboat-pr`.
 
-The first manual run of `tugboat-pr` fails with "Invalid pull request ID". This is expected; the run registers the webhook.
+### 6. Pipeline variables
 
-### 7. Service hooks
+1. Go to **Pipelines > Library** and create a variable group named `tugboat`.
+2. Add `TUGBOAT_REPO` with the Tugboat repository ID.
+3. Add `TUGBOAT_API_TOKEN` with the Tugboat access token. Select the lock icon to make it secret.
+4. Save the variable group.
+5. Open the **Pipeline permissions** tab, select **+**, and add each of the four pipelines.
+
+For an on-premise Tugboat installation, also add:
+
+- `TUGBOAT_API`: `https://api.<your Tugboat domain>/v3`
+- `TUGBOAT_DASHBOARD`: `https://dashboard.<your Tugboat domain>`
+
+### 7. Register the webhooks
+
+1. Run `tugboat-pr` manually. The run fails with "Invalid pull request ID". This is expected; the run registers the webhook.
+2. Run `tugboat-recheck` manually with the default `all`.
+
+### 8. Service hooks
 
 Go to **Project settings > Service hooks** and create four **Web Hooks** subscriptions for this repository:
 
@@ -137,7 +142,7 @@ Go to **Project settings > Service hooks** and create four **Web Hooks** subscri
 
 Each **URL** starts with `https://dev.azure.com/<organization name>/_apis/public/distributedtask`.
 
-### 8. Optional: require status checks
+### 9. Optional: require status checks
 
 1. Go to **Repos > Branches**, open the `main` branch menu, and select **Branch policies**.
 2. Under **Status Checks**, add a required policy for each of:
