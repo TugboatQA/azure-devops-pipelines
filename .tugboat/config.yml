@@ -5,6 +5,10 @@ services:
         # Visual Diffs and Lighthouse reports run against these URLs.
         urls:
             - /
+        # A Visual Diff fails when the page is less than 90% similar to the
+        # base preview.
+        visualdiff:
+            threshold: 90
         commands:
             init:
                 - ln -snf "${TUGBOAT_ROOT}" "${DOCROOT}"
