@@ -20,6 +20,7 @@ resources:
     - webhook: PullRequestComment
       connection: tugboat-pr-comment
       filters:
+        # Must match RECHECK_COMMENT in scripts/lib.sh.
         - path: resource.comment.content
           value: /tugboat recheck
 

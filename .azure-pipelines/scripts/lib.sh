@@ -35,6 +35,10 @@ STATUS_LIGHTHOUSE="Tugboat - Lighthouse Reports"
 # scripts find the comment again by this prefix.
 COMMENT_HEADER="[Tugboat](https://www.tugboatqa.com)"
 
+# The pull request comment that runs the tugboat-recheck pipeline. This must
+# match the webhook filter in tugboat-recheck.yml.
+RECHECK_COMMENT="/tugboat recheck"
+
 # _curl_json METHOD URL TOKEN [JSON_BODY]
 _curl_json() {
     local args=(--silent --show-error --fail-with-body --request "$1"
@@ -244,7 +248,8 @@ comment_links_body() {
     preview_id=$(jq --raw-output '.id' <<<"$1")
     services=$(tugboat_api GET "/previews/${preview_id}/services") || return 1
     jq --raw-output --null-input --argjson preview "$1" --argjson services "${services}" \
-        --arg header "${COMMENT_HEADER}" --arg dashboard "${TUGBOAT_DASHBOARD}" '
+        --arg header "${COMMENT_HEADER}" --arg dashboard "${TUGBOAT_DASHBOARD}" \
+        --arg recheck "${RECHECK_COMMENT}" '
         "\($dashboard)/\($preview.id)" as $url
         | [$services[] | select((.urls // []) | length > 0)]
         | sort_by([(.config.default != true), (.name | ascii_downcase)]) as $exposed
@@ -257,5 +262,6 @@ comment_links_body() {
         + "Dashboard:\n- \($url)\n"
         + (if $preview.base and any($services[]; (.config.urls // []) | length > 0)
             then "\nVisual Diffs:\n- \($url)/visualdiffs\n"
+                + "\nIf a Visual Diff fails, review it in Tugboat. After you approve it, comment `\($recheck)` on this pull request to update the status check.\n"
             else "" end)'
 }
