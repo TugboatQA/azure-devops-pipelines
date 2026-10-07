@@ -4,8 +4,8 @@ This repository is a reference setup for using Tugboat with a repository hosted 
 
 - Opening a pull request creates a Tugboat preview.
 - Pushing commits to a pull request rebuilds its preview.
-- Completing or abandoning a pull request deletes its preview.
-- A nightly schedule refreshes the base previews and rebuilds their child previews.
+- Completing or abandoning a pull request deletes its preview. A scheduled cleanup deletes any previews this misses.
+- A scheduled refresh updates the base previews and rebuilds their child previews.
 - Each pull request gets a comment with links to the preview's services, the Tugboat dashboard, and Visual Diffs.
 - Each pull request gets three status checks: `Tugboat`, `Tugboat - Visual Diffs`, and `Tugboat - Lighthouse Reports`.
 - Commenting `/tugboat recheck` on a pull request updates the Visual Diffs and Lighthouse status checks after someone approves a failed report in the Tugboat dashboard.
@@ -18,8 +18,57 @@ The site itself is a single static page (`index.html`) served by Apache, as conf
 | --- | --- | --- |
 | `.azure-pipelines/tugboat-pr.yml` | An Azure DevOps service hook reports that a pull request was created, received commits, or changed status | Reads the pull request from the Azure DevOps API. If it is active, creates or rebuilds its preview, posts or updates the links comment, waits for the build, Visual Diffs, and Lighthouse reports, and posts the status checks. If it is completed or abandoned, deletes its preview. |
 | `.azure-pipelines/tugboat-recheck.yml` | Someone comments `/tugboat recheck` on a pull request, or runs the pipeline manually with a pull request ID or `all` | Reads the current Visual Diffs and Lighthouse results, including approvals, and updates any status check that changed. |
-| `.azure-pipelines/tugboat-nightly.yml` | Daily at 00:08 UTC | Deletes previews whose pull request is closed, then refreshes each unlocked base preview and rebuilds its child previews. |
+| `.azure-pipelines/tugboat-cleanup.yml` | Every hour, on the hour (`0 * * * *`) | Deletes previews whose pull request is completed or abandoned. |
+| `.azure-pipelines/tugboat-refresh.yml` | Daily at 00:08 UTC (`8 0 * * *`) | Refreshes each unlocked base preview and rebuilds its child previews. |
 | `.azure-pipelines/scripts/` | Called by the pipelines | Bash scripts that use `curl` and `jq` to call the Tugboat and Azure DevOps APIs. |
+
+```mermaid
+flowchart TB
+    subgraph refresh["tugboat-refresh.yml"]
+        direction TB
+        rfTrigger(["Schedule"])
+        rfTrigger --> rfRefresh["Refresh each unlocked base preview"]
+        rfRefresh --> rfChildren["Tugboat rebuilds each base preview's child previews"]
+    end
+
+    subgraph cleanup["tugboat-cleanup.yml"]
+        direction TB
+        clTrigger(["Schedule"])
+        clTrigger --> clList["List the previews these pipelines created"]
+        clList --> clClosed{"Pull request completed<br/>or abandoned?"}
+        clClosed -- yes --> clDelete["Delete the preview"]
+        clClosed -- no --> clKeep["Keep the preview"]
+    end
+
+    subgraph recheck["tugboat-recheck.yml"]
+        direction TB
+        rcTrigger(["Comment '/tugboat recheck' on a pull request,<br/>or run manually with a pull request ID or 'all'"])
+        rcTrigger --> rcBuilt{"Preview finished building?"}
+        rcBuilt -- no --> rcSkip["Skip"]
+        rcBuilt -- yes --> rcRead["Read the Visual Diffs and Lighthouse<br/>results, including approvals"]
+        rcRead --> rcPost["Post each check that changed"]
+    end
+
+    subgraph pr["tugboat-pr.yml"]
+        direction TB
+        prTrigger(["Service hook: pull request created,<br/>source branch updated, or status changed"])
+        prTrigger --> prRead["Read the pull request from the Azure DevOps API"]
+        prRead --> prStatus{"Pull request status?"}
+        prStatus -- "completed or abandoned" --> prDelete["Delete the preview"]
+        prStatus -- active --> prPending["Set the Tugboat, Visual Diffs, and<br/>Lighthouse status checks to pending"]
+        prPending --> prExists{"Preview exists?"}
+        prExists -- no --> prCreate["Create a preview of the source branch,<br/>based on the target branch's base preview"]
+        prExists -- yes --> prRebuild["Rebuild the preview"]
+        prCreate --> prBuilding["Edit the links comment, if there is one,<br/>to say the preview is building"]
+        prRebuild --> prBuilding
+        prBuilding --> prWait["Wait for the Tugboat build job"]
+        prWait --> prResult{"Build succeeded?"}
+        prResult -- no --> prFailed["Tugboat check: failed<br/>Comment: build failed"]
+        prResult -- yes --> prReady["Tugboat check: succeeded<br/>Post or update the links comment"]
+        prReady --> prReports["Wait for the Visual Diffs and Lighthouse reports"]
+        prReports --> prChecks["Post the Visual Diffs and Lighthouse checks"]
+    end
+```
 
 The pipelines name each preview they create `Azure PR #<id>: <title>` and find it again by that name. Previews with other names, such as previews that people create in the Tugboat dashboard, are never changed or deleted.
 
@@ -67,7 +116,7 @@ Create two service connections, one named `tugboat-pull-request` and one named `
 
 ### 6. Pipelines
 
-For each of `tugboat-pr.yml`, `tugboat-recheck.yml`, and `tugboat-nightly.yml`:
+For each of `tugboat-pr.yml`, `tugboat-recheck.yml`, `tugboat-cleanup.yml`, and `tugboat-refresh.yml`:
 
 1. Go to **Pipelines > New pipeline > Azure Repos Git**, select the repository, then **Existing Azure Pipelines YAML file**.
 2. Select the file, then select **Run**. Name the pipeline after the file.
