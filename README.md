@@ -6,7 +6,9 @@ This repository is a reference setup for using Tugboat with a repository hosted 
 - Pushing commits to a pull request rebuilds its preview.
 - Completing or abandoning a pull request deletes its preview.
 - A nightly schedule refreshes the base previews and rebuilds their child previews.
+- Each pull request gets a comment with links to the preview's services, the Tugboat dashboard, and Visual Diffs.
 - Each pull request gets three status checks: `Tugboat`, `Tugboat - Visual Diffs`, and `Tugboat - Lighthouse Reports`.
+- Commenting `/tugboat recheck` on a pull request updates the Visual Diffs and Lighthouse status checks after someone approves a failed report in the Tugboat dashboard.
 
 The site itself is a single static page (`index.html`) served by Apache, as configured in `.tugboat/config.yml`.
 
@@ -14,7 +16,8 @@ The site itself is a single static page (`index.html`) served by Apache, as conf
 
 | File | Runs when | What it does |
 | --- | --- | --- |
-| `.azure-pipelines/tugboat-pr.yml` | An Azure DevOps service hook reports that a pull request was created, received commits, or changed status | Reads the pull request from the Azure DevOps API. If it is active, creates or rebuilds its preview, waits for the build, Visual Diffs, and Lighthouse reports, and posts the status checks. If it is completed or abandoned, deletes its preview. |
+| `.azure-pipelines/tugboat-pr.yml` | An Azure DevOps service hook reports that a pull request was created, received commits, or changed status | Reads the pull request from the Azure DevOps API. If it is active, creates or rebuilds its preview, posts or updates the links comment, waits for the build, Visual Diffs, and Lighthouse reports, and posts the status checks. If it is completed or abandoned, deletes its preview. |
+| `.azure-pipelines/tugboat-recheck.yml` | Someone comments `/tugboat recheck` on a pull request, or runs the pipeline manually with a pull request ID or `all` | Reads the current Visual Diffs and Lighthouse results, including approvals, and updates any status check that changed. |
 | `.azure-pipelines/tugboat-nightly.yml` | Daily at 00:08 UTC | Deletes previews whose pull request is closed, then refreshes each unlocked base preview and rebuilds its child previews. |
 | `.azure-pipelines/scripts/` | Called by the pipelines | Bash scripts that use `curl` and `jq` to call the Tugboat and Azure DevOps APIs. |
 
@@ -54,15 +57,17 @@ For an on-premise Tugboat installation, also add:
 2. Select **\<project name\> Build Service (\<organization name\>)**.
 3. Set **Contribute to pull requests** to **Allow**.
 
-### 5. Incoming webhook
+### 5. Incoming webhooks
+
+Create two service connections, one named `tugboat-pull-request` and one named `tugboat-pr-comment`. For each:
 
 1. Go to **Project settings > Service connections > New service connection > Incoming WebHook**.
-2. Set both **WebHook Name** and **Service connection name** to `tugboat-pull-request`.
+2. Set both **WebHook Name** and **Service connection name** to the name.
 3. Select **Grant access permission to all pipelines** and save.
 
 ### 6. Pipelines
 
-For each of `tugboat-pr.yml` and `tugboat-nightly.yml`:
+For each of `tugboat-pr.yml`, `tugboat-recheck.yml`, and `tugboat-nightly.yml`:
 
 1. Go to **Pipelines > New pipeline > Azure Repos Git**, select the repository, then **Existing Azure Pipelines YAML file**.
 2. Select the file, then select **Run**. Name the pipeline after the file.
@@ -72,17 +77,16 @@ The first manual run of `tugboat-pr` fails with "Invalid pull request ID". This 
 
 ### 7. Service hooks
 
-Go to **Project settings > Service hooks** and create three **Web Hooks** subscriptions, all for this repository and all with this **URL**:
+Go to **Project settings > Service hooks** and create four **Web Hooks** subscriptions for this repository:
 
-```
-https://dev.azure.com/<organization name>/_apis/public/distributedtask/webhooks/tugboat-pull-request?api-version=6.0-preview
-```
+| Trigger on this type of event | Change | URL ends with |
+| --- | --- | --- |
+| Pull request created | (none) | `/webhooks/tugboat-pull-request?api-version=6.0-preview` |
+| Pull request updated | Source branch updated | `/webhooks/tugboat-pull-request?api-version=6.0-preview` |
+| Pull request updated | Status changed | `/webhooks/tugboat-pull-request?api-version=6.0-preview` |
+| Pull request commented on | (none) | `/webhooks/tugboat-pr-comment?api-version=6.0-preview` |
 
-| Trigger on this type of event | Change |
-| --- | --- |
-| Pull request created | (none) |
-| Pull request updated | Source branch updated |
-| Pull request updated | Status changed |
+Each **URL** starts with `https://dev.azure.com/<organization name>/_apis/public/distributedtask`.
 
 ### 8. Optional: require status checks
 
