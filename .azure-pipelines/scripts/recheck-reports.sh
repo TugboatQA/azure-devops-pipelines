@@ -29,8 +29,9 @@ if [[ "${pr_id}" == "all" ]]; then
     exit
 fi
 
+# The ID can come from the unauthenticated webhook payload. Do not print it.
 if [[ ! "${pr_id}" =~ ^[0-9]+$ ]]; then
-    echo "##vso[task.logissue type=error]Invalid pull request ID: '${pr_id}'"
+    echo "##vso[task.logissue type=error]Invalid pull request ID"
     exit 1
 fi
 

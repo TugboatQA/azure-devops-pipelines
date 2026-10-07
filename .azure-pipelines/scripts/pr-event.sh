@@ -20,8 +20,9 @@ source "$(dirname "$0")/lib.sh"
 REPORT_TIMEOUT_SECONDS="${REPORT_TIMEOUT_SECONDS:-1200}"
 
 pr_id="${1:-}"
+# The ID comes from the unauthenticated webhook payload. Do not print it.
 if [[ ! "${pr_id}" =~ ^[0-9]+$ ]]; then
-    echo "##vso[task.logissue type=error]Invalid pull request ID: '${pr_id}'"
+    echo "##vso[task.logissue type=error]Invalid pull request ID"
     exit 1
 fi
 
@@ -78,7 +79,7 @@ set_comment "${pr_id}" "${COMMENT_HEADER} is building a new preview for this pul
 
 job=$(wait_for_job "${job_id}")
 if [[ "$(jq --raw-output '.result' <<<"${job}")" != "success" ]]; then
-    message=$(jq --raw-output '.message // "The Tugboat preview build failed"' <<<"${job}")
+    message=$(jq --raw-output '.message // "The Tugboat preview build failed" | gsub("[\\r\\n]+"; " ")' <<<"${job}")
     post_status "${pr_id}" "${STATUS_BUILD}" failed "${message:0:200}" "${preview_url}"
     post_status "${pr_id}" "${STATUS_VISUALDIFFS}" error "Not run: the Tugboat preview failed to build" "${preview_url}"
     post_status "${pr_id}" "${STATUS_LIGHTHOUSE}" error "Not run: the Tugboat preview failed to build" "${preview_url}"
