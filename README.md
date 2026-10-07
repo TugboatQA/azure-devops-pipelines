@@ -16,10 +16,10 @@ The site itself is a single static page (`index.html`) served by Apache, as conf
 
 | File | Runs when | What it does |
 | --- | --- | --- |
-| `.azure-pipelines/tugboat-pr.yml` | An Azure DevOps service hook reports that a pull request was created, received commits, or changed status | Reads the pull request from the Azure DevOps API. If it is active, creates or rebuilds its preview, posts or updates the links comment, waits for the build, Visual Diffs, and Lighthouse reports, and posts the status checks. If it is completed or abandoned, deletes its preview. |
+| `.azure-pipelines/tugboat-pr.yml` | An Azure DevOps service hook reports that a pull request was created, received commits, or changed status | Reads the pull request from the Azure DevOps API. If it is active, creates or rebuilds its preview, posts or updates the links comment, waits for the build, Visual Diffs, and Lighthouse reports, and posts the status checks. If it is completed or abandoned, deletes its preview unless the preview is locked. |
 | `.azure-pipelines/tugboat-recheck.yml` | Someone comments `/tugboat recheck` on a pull request, or runs the pipeline manually with a pull request ID or `all` | Reads the current Visual Diffs and Lighthouse results, including approvals, and updates any status check that changed. |
-| `.azure-pipelines/tugboat-cleanup.yml` | Every hour, on the hour (`0 * * * *`) | Deletes previews whose pull request is completed or abandoned. |
-| `.azure-pipelines/tugboat-refresh.yml` | Daily at 00:08 UTC (`8 0 * * *`) | Refreshes each unlocked base preview and rebuilds its child previews. |
+| `.azure-pipelines/tugboat-cleanup.yml` | On a schedule. The default `cron` value, `0 * * * *`, runs every hour. | Deletes previews whose pull request is completed or abandoned, except locked previews. |
+| `.azure-pipelines/tugboat-refresh.yml` | On a schedule. The default `cron` value, `8 0 * * *`, runs daily at 00:08 UTC. | Refreshes each unlocked base preview and rebuilds its child previews. |
 | `.azure-pipelines/scripts/` | Called by the pipelines | Bash scripts that use `curl` and `jq` to call the Tugboat and Azure DevOps APIs. |
 
 ```mermaid
@@ -35,7 +35,7 @@ flowchart TB
         direction TB
         clTrigger(["Schedule"])
         clTrigger --> clList["List the previews these pipelines created"]
-        clList --> clClosed{"Pull request completed<br/>or abandoned?"}
+        clList --> clClosed{"Pull request completed or<br/>abandoned, and preview unlocked?"}
         clClosed -- yes --> clDelete["Delete the preview"]
         clClosed -- no --> clKeep["Keep the preview"]
     end
@@ -54,7 +54,7 @@ flowchart TB
         prTrigger(["Service hook: pull request created,<br/>source branch updated, or status changed"])
         prTrigger --> prRead["Read the pull request from the Azure DevOps API"]
         prRead --> prStatus{"Pull request status?"}
-        prStatus -- "completed or abandoned" --> prDelete["Delete the preview"]
+        prStatus -- "completed or abandoned" --> prDelete["Delete the preview,<br/>unless it is locked"]
         prStatus -- active --> prPending["Set the Tugboat, Visual Diffs, and<br/>Lighthouse status checks to pending"]
         prPending --> prExists{"Preview exists?"}
         prExists -- no --> prCreate["Create a preview of the source branch,<br/>based on the target branch's base preview"]

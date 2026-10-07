@@ -12,33 +12,45 @@
 # shellcheck source=SCRIPTDIR/lib.sh
 source "$(dirname "$0")/lib.sh"
 
-pr_ids="${1:-all}"
-if [[ "${pr_ids}" == "all" ]]; then
+pr_id="${1:-all}"
+
+# Recheck each active pull request in its own process, so a failure for one
+# pull request does not stop the others.
+if [[ "${pr_id}" == "all" ]]; then
     pr_ids=$(azure_api GET "/pullRequests?searchCriteria.status=active" | jq --raw-output '.value[].pullRequestId')
-elif [[ ! "${pr_ids}" =~ ^[0-9]+$ ]]; then
-    echo "##vso[task.logissue type=error]Invalid pull request ID: '${pr_ids}'"
+    failures=0
+    for id in ${pr_ids}; do
+        if ! bash "$0" "${id}"; then
+            warn "PR #${id}: recheck failed"
+            failures=$((failures + 1))
+        fi
+    done
+    ((failures == 0))
+    exit
+fi
+
+if [[ ! "${pr_id}" =~ ^[0-9]+$ ]]; then
+    echo "##vso[task.logissue type=error]Invalid pull request ID: '${pr_id}'"
     exit 1
 fi
 
 previews=$(list_previews)
+preview_id=$(find_pr_preview "${previews}" "${pr_id}")
+if [[ -z "${preview_id}" ]]; then
+    echo "PR #${pr_id}: no preview"
+    exit 0
+fi
 
-for pr_id in ${pr_ids}; do
-    preview_id=$(find_pr_preview "${previews}" "${pr_id}")
-    if [[ -z "${preview_id}" ]]; then
-        echo "PR #${pr_id}: no preview"
-        continue
-    fi
+# While a build is running, the tugboat-pr pipeline posts the statuses.
+preview=$(tugboat_api GET "/previews/${preview_id}")
+state=$(jq --raw-output '.state' <<<"${preview}")
+case "${state}" in
+    new | pending | building | rebuilding | refreshing | resetting | failed | cancelled)
+        echo "PR #${pr_id}: preview ${preview_id} is ${state}, skipping"
+        exit 0
+        ;;
+esac
 
-    # While a build is running, the tugboat-pr pipeline posts the statuses.
-    preview=$(tugboat_api GET "/previews/${preview_id}")
-    state=$(jq --raw-output '.state' <<<"${preview}")
-    case "${state}" in
-        new | pending | building | rebuilding | refreshing | resetting | failed)
-            echo "PR #${pr_id}: preview ${preview_id} is ${state}, skipping"
-            continue
-            ;;
-    esac
-
-    echo "PR #${pr_id}: preview ${preview_id}"
-    post_report_statuses "${pr_id}" "$(report_statuses "${preview}" "$(preview_reports "${preview_id}")")"
-done
+echo "PR #${pr_id}: preview ${preview_id}"
+reports=$(preview_reports "${preview_id}")
+post_report_statuses "${pr_id}" "$(report_statuses "${preview}" "${reports}")"

@@ -31,11 +31,13 @@ previews=$(list_previews)
 preview_id=$(find_pr_preview "${previews}" "${pr_id}")
 
 if [[ "${status}" != "active" ]]; then
-    if [[ -n "${preview_id}" ]]; then
+    if [[ -z "${preview_id}" ]]; then
+        echo "PR #${pr_id} is ${status} and has no preview"
+    elif preview_locked "${previews}" "${preview_id}"; then
+        echo "PR #${pr_id} is ${status}: preview ${preview_id} is locked, skipping"
+    else
         echo "PR #${pr_id} is ${status}: deleting preview ${preview_id}"
         tugboat_api DELETE "/previews/${preview_id}" >/dev/null
-    else
-        echo "PR #${pr_id} is ${status} and has no preview"
     fi
     exit 0
 fi
@@ -71,20 +73,26 @@ job_id=$(jq --raw-output '.id' <<<"${job}")
 preview_id=$(jq --raw-output '.object' <<<"${job}")
 preview_url="${TUGBOAT_DASHBOARD}/${preview_id}"
 echo "Waiting for job ${job_id}: ${preview_url}"
-set_comment "${pr_id}" "${COMMENT_HEADER} is building a new preview for this pull request..."$'\n\n'"Dashboard:"$'\n'"- ${preview_url}"
+set_comment "${pr_id}" "${COMMENT_HEADER} is building a new preview for this pull request..."$'\n\n'"Dashboard:"$'\n'"- ${preview_url}" \
+    || warn "Could not update the pull request comment"
 
 job=$(wait_for_job "${job_id}")
 if [[ "$(jq --raw-output '.result' <<<"${job}")" != "success" ]]; then
     message=$(jq --raw-output '.message // "The Tugboat preview build failed"' <<<"${job}")
     post_status "${pr_id}" "${STATUS_BUILD}" failed "${message:0:200}" "${preview_url}"
-    set_comment "${pr_id}" "${COMMENT_HEADER} failed to build the preview for this pull request."$'\n\n'"Dashboard:"$'\n'"- ${preview_url}"
+    post_status "${pr_id}" "${STATUS_VISUALDIFFS}" error "Not run: the Tugboat preview failed to build" "${preview_url}"
+    post_status "${pr_id}" "${STATUS_LIGHTHOUSE}" error "Not run: the Tugboat preview failed to build" "${preview_url}"
+    set_comment "${pr_id}" "${COMMENT_HEADER} failed to build the preview for this pull request."$'\n\n'"Dashboard:"$'\n'"- ${preview_url}" \
+        || warn "Could not update the pull request comment"
     echo "##vso[task.logissue type=error]${message}"
     exit 1
 fi
 post_status "${pr_id}" "${STATUS_BUILD}" succeeded "The Tugboat preview is ready" "${preview_url}"
 
 preview=$(tugboat_api GET "/previews/${preview_id}")
-set_comment "${pr_id}" "$(comment_links_body "${preview}")" post
+if ! links=$(comment_links_body "${preview}") || ! set_comment "${pr_id}" "${links}" post; then
+    warn "Could not post the pull request comment"
+fi
 
 # Tugboat renders Visual Diffs and Lighthouse reports after the build job ends.
 # Wait until every report from this build is finished, then post the results.

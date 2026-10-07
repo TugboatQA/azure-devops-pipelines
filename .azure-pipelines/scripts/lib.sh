@@ -13,6 +13,8 @@
 #   TUGBOAT_DASHBOARD   Defaults to https://dashboard.tugboatqa.com
 
 set -euo pipefail
+# Also exit when a command inside $(...) fails. Requires bash 4.4 or later.
+shopt -s inherit_errexit 2>/dev/null || true
 
 TUGBOAT_API="${TUGBOAT_API:-https://api.tugboatqa.com/v3}"
 TUGBOAT_DASHBOARD="${TUGBOAT_DASHBOARD:-https://dashboard.tugboatqa.com}"
@@ -84,13 +86,18 @@ find_pr_preview() {
     pr_previews "$1" | awk -v pr="$2" '$2 == pr && !found { print $1; found = 1 }'
 }
 
+# preview_locked PREVIEWS_JSON PREVIEW_ID succeeds if the preview is locked.
+# Tugboat refuses to delete a locked preview.
+preview_locked() {
+    jq --exit-status --arg id "$2" 'any(.[]; .id == $id and .locked == true)' <<<"$1" >/dev/null
+}
+
 # wait_for_job JOB_ID polls the Tugboat job until it ends and prints the final
-# job JSON.
+# job JSON. Retries when a poll fails.
 wait_for_job() {
     local job
     while true; do
-        job=$(tugboat_api GET "/jobs/$1")
-        if jq --exit-status '.endedAt' <<<"${job}" >/dev/null; then
+        if job=$(tugboat_api GET "/jobs/$1") && jq --exit-status '.endedAt' <<<"${job}" >/dev/null; then
             echo "${job}"
             return
         fi
@@ -114,11 +121,17 @@ post_status() {
 # preview_reports PREVIEW_ID prints the preview's Visual Diffs and Lighthouse
 # reports as {"visualdiffs": [...], "lighthouse": [...]}.
 preview_reports() {
-    local visualdiffs="[]" lighthouse="[]" service_id screenshot_id
-    for service_id in $(tugboat_api GET "/previews/$1/services" | jq --raw-output '.[].id'); do
-        lighthouse=$(jq --slurp 'add' <<<"${lighthouse} $(tugboat_api GET "/services/${service_id}/lighthouse")")
-        for screenshot_id in $(tugboat_api GET "/services/${service_id}/screenshots" | jq --raw-output '.[].id'); do
-            visualdiffs=$(jq --slurp 'add' <<<"${visualdiffs} $(tugboat_api GET "/screenshots/${screenshot_id}/visualdiffs")")
+    local visualdiffs="[]" lighthouse="[]" service_ids service_id screenshot_ids screenshot_id reports
+    # Assign each list before looping over it: a failure inside "for x in $(...)"
+    # does not stop the script.
+    service_ids=$(tugboat_api GET "/previews/$1/services" | jq --raw-output '.[].id')
+    for service_id in ${service_ids}; do
+        reports=$(tugboat_api GET "/services/${service_id}/lighthouse")
+        lighthouse=$(jq --slurp 'add' <<<"${lighthouse} ${reports}")
+        screenshot_ids=$(tugboat_api GET "/services/${service_id}/screenshots" | jq --raw-output '.[].id')
+        for screenshot_id in ${screenshot_ids}; do
+            reports=$(tugboat_api GET "/screenshots/${screenshot_id}/visualdiffs")
+            visualdiffs=$(jq --slurp 'add' <<<"${visualdiffs} ${reports}")
         done
     done
     jq --null-input --argjson vd "${visualdiffs}" --argjson lh "${lighthouse}" '{visualdiffs: $vd, lighthouse: $lh}'
@@ -201,19 +214,27 @@ find_comment() {
 # new comment when none exists. With MODE "edit" (the default), only updates an
 # existing comment. This matches how Tugboat updates its comment in place on
 # GitHub, GitLab, and Bitbucket.
+#
+# Returns non-zero on failure. Each step checks its own result, because
+# callers run this with "||", which turns off "set -e" inside it.
 set_comment() {
     local pr_id="$1" body="$2" mode="${3:-edit}" found thread_id comment_id
-    found=$(find_comment "${pr_id}")
+    found=$(find_comment "${pr_id}") || return 1
     if [[ -n "${found}" ]]; then
         read -r thread_id comment_id <<<"${found}"
         body+=$'\n\n'"_Last updated: $(date -u '+%a, %d %b %Y %H:%M:%S GMT')_"
         azure_api PATCH "/pullRequests/${pr_id}/threads/${thread_id}/comments/${comment_id}" \
-            "$(jq --null-input --arg content "${body}" '{content: $content}')" >/dev/null
+            "$(jq --null-input --arg content "${body}" '{content: $content}')" >/dev/null || return 1
     elif [[ "${mode}" == "post" ]]; then
         azure_api POST "/pullRequests/${pr_id}/threads" \
             "$(jq --null-input --arg content "${body}" \
-                '{comments: [{parentCommentId: 0, content: $content, commentType: 1}]}')" >/dev/null
+                '{comments: [{parentCommentId: 0, content: $content, commentType: 1}]}')" >/dev/null || return 1
     fi
+}
+
+# warn MESSAGE logs a warning in the pipeline run.
+warn() {
+    echo "##vso[task.logissue type=warning]$1"
 }
 
 # comment_links_body PREVIEW_JSON prints the preview links comment, in the same
@@ -221,7 +242,7 @@ set_comment() {
 comment_links_body() {
     local preview_id services
     preview_id=$(jq --raw-output '.id' <<<"$1")
-    services=$(tugboat_api GET "/previews/${preview_id}/services")
+    services=$(tugboat_api GET "/previews/${preview_id}/services") || return 1
     jq --raw-output --null-input --argjson preview "$1" --argjson services "${services}" \
         --arg header "${COMMENT_HEADER}" --arg dashboard "${TUGBOAT_DASHBOARD}" '
         "\($dashboard)/\($preview.id)" as $url
