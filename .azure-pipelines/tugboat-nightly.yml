@@ -1,0 +1,39 @@
+# Refreshes the Tugboat base previews and rebuilds their child previews every
+# night. Also deletes previews for closed pull requests that the tugboat-pr
+# pipeline missed.
+trigger: none
+pr: none
+
+schedules:
+        # ┌───────────── minute (0 - 59)
+        # │ ┌───────────── hour (0 - 23, UTC)
+        # │ │ ┌───────────── day of the month (1 - 31)
+        # │ │ │ ┌───────────── month (1 - 12)
+        # │ │ │ │ ┌───────────── day of the week (0 - 6, Sunday = 0)
+        # * * * * *
+  - cron: '8 0 * * *'
+    displayName: Nightly Tugboat refresh
+    branches:
+      include:
+        - main
+    always: true
+
+pool:
+  vmImage: ubuntu-latest
+
+variables:
+  - group: tugboat
+
+steps:
+  - checkout: self
+    fetchDepth: 1
+  - bash: bash .azure-pipelines/scripts/cleanup-closed-prs.sh
+    displayName: Delete previews for closed pull requests
+    env:
+      TUGBOAT_API_TOKEN: $(TUGBOAT_API_TOKEN)
+      SYSTEM_ACCESSTOKEN: $(System.AccessToken)
+  - bash: bash .azure-pipelines/scripts/refresh-base-previews.sh
+    displayName: Refresh base previews and rebuild children
+    condition: succeededOrFailed()
+    env:
+      TUGBOAT_API_TOKEN: $(TUGBOAT_API_TOKEN)

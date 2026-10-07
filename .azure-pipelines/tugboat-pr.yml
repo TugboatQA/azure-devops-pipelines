@@ -1,0 +1,39 @@
+# Manages the Tugboat preview for a pull request.
+#
+# Azure Pipelines has no YAML trigger for pull request events in Azure Repos,
+# so three service hook subscriptions send events to the tugboat-pull-request
+# Incoming WebHook service connection:
+#   - Pull request created
+#   - Pull request updated, Change: Source branch updated
+#   - Pull request updated, Change: Status changed
+#
+# Azure Pipelines always reads a webhook-triggered pipeline from the default
+# branch, so code in a pull request cannot change these steps or read the
+# Tugboat access token.
+trigger: none
+pr: none
+
+resources:
+  webhooks:
+    - webhook: PullRequest
+      connection: tugboat-pull-request
+
+pool:
+  vmImage: ubuntu-latest
+
+variables:
+  - group: tugboat
+
+jobs:
+  - job: tugboat_preview
+    displayName: Tugboat preview
+    timeoutInMinutes: 60
+    steps:
+      - checkout: self
+        fetchDepth: 1
+      - bash: bash .azure-pipelines/scripts/pr-event.sh "${PR_ID}"
+        displayName: Update the Tugboat preview
+        env:
+          PR_ID: ${{ parameters.PullRequest.resource.pullRequestId }}
+          TUGBOAT_API_TOKEN: $(TUGBOAT_API_TOKEN)
+          SYSTEM_ACCESSTOKEN: $(System.AccessToken)

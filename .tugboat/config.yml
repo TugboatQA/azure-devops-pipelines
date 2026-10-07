@@ -1,0 +1,12 @@
+services:
+    apache:
+        image: tugboatqa/httpd
+        default: true
+        http: true
+        https: false
+        # Visual Diffs and Lighthouse reports run against these URLs.
+        urls:
+            - /
+        commands:
+            init:
+                - ln -snf "${TUGBOAT_ROOT}" "${DOCROOT}"
